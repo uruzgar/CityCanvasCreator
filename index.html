@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>City Poster Architect - Full Export</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Montserrat:wght@300;700&family=Oswald:wght@300;700&family=Playfair+Display:ital,wght@0,700;1,700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <style>
+        :root { --panel-bg: #ffffff; --body-bg: #f0f0f0; }
+        body { font-family: 'Inter', sans-serif; background: var(--body-bg); display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
+        .controls { 
+            background: var(--panel-bg); padding: 20px; border-radius: 15px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1); margin-bottom: 20px;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; width: 90%; max-width: 900px;
+        }
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        input, select, button { padding: 12px; border: 1px solid #ddd; border-radius: 8px; outline: none; font-size: 14px; }
+        button { background: #000; color: #fff; cursor: pointer; border: none; font-weight: 600; transition: 0.3s; }
+        button:hover { background: #333; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #suggestions {
+            position: absolute; top: 100%; left: 0; right: 0;
+            background: white; border: 1px solid #eee; border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1); z-index: 1000; max-height: 200px; overflow-y: auto; display: none;
+        }
+        .suggestion-item { padding: 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #f9f9f9; }
+        
+        /* ÖNEMLİ: İndirilecek alanın stili */
+        #canvasContainer { 
+            background: white; 
+            padding: 60px 40px; /* Üst ve yanlardan daha geniş paspartu */
+            border-radius: 0px; 
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15); 
+            transition: background-color 0.4s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+			-webkit-font-smoothing: antialiased;
+			-moz-osx-font-smoothing: grayscale;
+			text-rendering: optimizeLegibility;
+        }
+        canvas { display: block; max-width: 100%; height: auto; }
+        .city-footer { text-align: center; margin-top: 40px; width: 100%; }
+        .city-name { font-size: 42px; margin: 0; letter-spacing: 8px; text-transform: uppercase; }
+        .city-coords { font-size: 14px; letter-spacing: 4px; margin-top: 15px; font-family: monospace; opacity: 0.8; }
+    </style>
+</head>
+<body>
+
+<div class="controls">
+    <div class="control-group" style="position:relative;">
+        <label>Şehir</label>
+        <input type="text" id="cityInput" placeholder="Şehir ara..." oninput="handleAutocomplete(this.value)" autocomplete="off">
+        <div id="suggestions"></div>
+    </div>
+    <div class="control-group">
+        <label>Mesafe</label>
+        <select id="radiusInput">
+            <option value="5000" selected>5 KM</option>
+            <option value="10000">10 KM</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label>Tema</label>
+        <select id="themeSelect">
+            <option value="classic">Klasik (Beyaz/Siyah)</option>
+            <option value="dark">Gece Modu (Siyah/Altın)</option>
+            <option value="blueprint">Blueprint (Mavi/Beyaz)</option>
+            <option value="vintage">Vintage (Eskitilmiş)</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label>Yazı Tipi</label>
+        <select id="fontSelect">
+            <option value="Montserrat">Modern (Montserrat)</option>
+            <option value="Oswald">Sert (Oswald)</option>
+            <option value="Playfair Display">Lüks (Playfair)</option>
+            <option value="Cinzel">Klasik (Cinzel)</option>
+        </select>
+    </div>
+	<div class="control-group">
+		<label>Özel Not / Tarih</label>
+		<input type="text" id="noteInput" placeholder="Bir not veya tarih yazın..." oninput="updateNote(this.value)">
+	</div>
+    <button id="drawBtn" onclick="generateMap()">Çizimi Başlat</button>
+    <button onclick="downloadFullPoster()" style="background:#27ae60;">POSTERİ KAYDET (PNG)</button>
+</div>
+
+<div id="canvasContainer">
+    <canvas id="mapCanvas" width="1000" height="1100"></canvas>
+    <div class="city-footer">
+        <h1 id="cityNameDisplay" class="city-name">ŞEHİR</h1>
+        <div id="cityCoordsDisplay" class="city-coords">00.0000° N / 00.0000° E</div>
+		<div id="cityNoteDisplay" style="font-size: 18px; margin-top: 15px; font-weight: 300; letter-spacing: 2px;"></div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    let selectedLat, selectedLon, debounceTimer;
+    let lastMapData = null; 
+
+    const Themes = {
+        classic:   { bg: "#FFFFFF", main: "#000000", primary: "#222", secondary: "#444", other: "#888", text: "#000" },
+        dark:      { bg: "#0d0d0d", main: "#d4af37", primary: "#c5a028", secondary: "#8a6d19", other: "#443a1a", text: "#d4af37" },
+        blueprint: { bg: "#1a3a6d", main: "#ffffff", primary: "#e0e0e0", secondary: "#c0c0c0", other: "#7a9cc6", text: "#ffffff" },
+        vintage:   { bg: "#f4e4bc", main: "#4e342e", primary: "#5d4037", secondary: "#795548", other: "#a1887f", text: "#4e342e" }
+    };
+
+    window.onload = getUserLocation;
+
+	// Sayfa yüklendiğinde bugünün tarihini otomatik yaz
+	window.addEventListener('DOMContentLoaded', () => {
+		const today = new Date();
+		const formattedDate = today.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
+		document.getElementById('noteInput').value = formattedDate;
+		updateNote(formattedDate);
+	});
+
+	function updateNote(val) {
+		const noteDisplay = document.getElementById('cityNoteDisplay');
+		const themeKey = document.getElementById('themeSelect').value;
+		const fontKey = document.getElementById('fontSelect').value;
+		
+		noteDisplay.innerText = val;
+		noteDisplay.style.color = Themes[themeKey].text;
+		
+		// Notun fontunu şehirden biraz daha sade (Montserrat) veya seçili fontun hafifi yapabiliriz
+		noteDisplay.style.fontFamily = fontKey;
+		noteDisplay.style.opacity = "0.7"; 
+	}
+
+	// generateMap fonksiyonunun içine, cityNameDisplay'i güncellediğin yere şu satırı ekle:
+	updateNote(document.getElementById('noteInput').value);
+
+    async function getUserLocation() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                selectedLat = pos.coords.latitude;
+                selectedLon = pos.coords.longitude;
+                try {
+                    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${selectedLat}&lon=${selectedLon}`);
+                    const data = await res.json();
+                    document.getElementById('cityInput').value = data.address.city || data.address.town || "Konumum";
+                    generateMap();
+                } catch(e) { console.warn("Konum ismi alınamadı"); }
+            });
+        }
+    }
+
+    function handleAutocomplete(val) {
+        clearTimeout(debounceTimer);
+        const suggBox = document.getElementById('suggestions');
+        if (val.length < 3) { suggBox.style.display = 'none'; return; }
+        debounceTimer = setTimeout(async () => {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${val}&limit=5`);
+            const data = await res.json();
+            suggBox.innerHTML = '';
+            if (data.length > 0) {
+                suggBox.style.display = 'block';
+                data.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'suggestion-item';
+                    div.innerText = item.display_name;
+                    div.onclick = () => {
+                        document.getElementById('cityInput').value = item.display_name.split(',')[0];
+                        selectedLat = parseFloat(item.lat);
+                        selectedLon = parseFloat(item.lon);
+                        suggBox.style.display = 'none';
+                        lastMapData = null; 
+                        generateMap();
+                    };
+                    suggBox.appendChild(div);
+                });
+            }
+        }, 400);
+    }
+
+    async function generateMap() {
+        const btn = document.getElementById('drawBtn');
+        const radius = document.getElementById('radiusInput').value;
+        const themeKey = document.getElementById('themeSelect').value;
+        const fontKey = document.getElementById('fontSelect').value;
+        const theme = Themes[themeKey];
+        const cityName = document.getElementById('cityInput').value.toUpperCase();
+
+        document.getElementById('cityNameDisplay').style.fontFamily = fontKey;
+        document.getElementById('cityNameDisplay').style.color = theme.text;
+        document.getElementById('cityNameDisplay').innerText = cityName;
+        document.getElementById('cityCoordsDisplay').style.color = theme.text;
+        document.getElementById('canvasContainer').style.backgroundColor = theme.bg;
+
+        if (!selectedLat) return;
+
+        const latDir = selectedLat >= 0 ? 'N' : 'S';
+        const lonDir = selectedLon >= 0 ? 'E' : 'W';
+        document.getElementById('cityCoordsDisplay').innerText = `${Math.abs(selectedLat).toFixed(4)}° ${latDir} / ${Math.abs(selectedLon).toFixed(4)}° ${lonDir}`;
+
+        if (lastMapData) {
+            draw(lastMapData, selectedLat, selectedLon, radius, theme);
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerText = "Veri Alınıyor...";
+        try {
+            const query = `[out:json];way["highway"](around:${radius},${selectedLat},${selectedLon});out geom;`;
+            const res = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query));
+            const data = await res.json();
+            lastMapData = data.elements;
+            draw(lastMapData, selectedLat, selectedLon, radius, theme);
+        } catch (e) {
+            alert("Hata oluştu, tekrar deneyin.");
+        } finally {
+            btn.disabled = false;
+            btn.innerText = "Çizimi Başlat";
+        }
+    }
+
+	function draw(elements, lat, lon, radius, theme) {
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = 'high';
+
+		ctx.fillStyle = theme.bg;
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		
+		const padding = 20; // İç padding (Yolları kenardan uzak tutar)
+		const iW = canvas.width - (padding * 2);
+		const iH = canvas.height - (padding * 2);
+
+		const latDelta = radius / 111320;
+		const cosLat = Math.cos(lat * Math.PI / 180);
+		const lonDelta = radius / (111320 * cosLat);
+
+		const minLon = lon - lonDelta; const maxLon = lon + lonDelta;
+		const minLat = lat - latDelta; const maxLat = lat + latDelta;
+		const mult = radius <= 5000 ? 1.4 : 1.0;
+
+		const layers = {
+			other:     { w: 0.3 * mult, c: theme.other,     a: 0.6, ways: [] },
+			secondary: { w: 0.8 * mult, c: theme.secondary, a: 0.8, ways: [] },
+			primary:   { w: 1.8 * mult, c: theme.primary,   a: 0.9, ways: [] },
+			motorway:  { w: 3.2 * mult, c: theme.main,      a: 1.0, ways: [] }
+		};
+
+		elements.forEach(el => {
+			const type = el.tags.highway;
+			let target = layers.other;
+			if (["motorway", "trunk"].includes(type)) target = layers.motorway;
+			else if (type === "primary") target = layers.primary;
+			else if (type === "secondary") target = layers.secondary;
+			if (el.geometry) target.ways.push(el.geometry);
+		});
+
+		ctx.lineCap = "round"; ctx.lineJoin = "round";
+
+		// Katmanlı Çizim
+		["other", "secondary", "primary", "motorway"].forEach(key => {
+			const l = layers[key];
+			ctx.beginPath();
+			ctx.lineWidth = l.w;
+			ctx.strokeStyle = l.c;
+			ctx.globalAlpha = l.a;
+
+			l.ways.forEach(geom => {
+				geom.forEach((pt, i) => {
+					const x = padding + ((pt.lon - minLon) / (maxLon - minLon)) * iW;
+					const y = padding + iH - ((pt.lat - minLat) / (maxLat - minLat)) * iH;
+					if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+				});
+			});
+			ctx.stroke();
+		});
+
+		// --- GERİ EKLENEN: Estetik İnce Çerçeve Çizgisi ---
+		ctx.globalAlpha = 0.3; // Hafif ve zarif görünüm
+		ctx.strokeStyle = theme.main;
+		ctx.lineWidth = 1;
+		// Haritanın tam sınırlarına (padding-5) ince bir dikdörtgen
+		ctx.strokeRect(padding - 5, padding - 5, iW + 10, iH + 10);
+		// ------------------------------------------------
+
+		// Ölçek Çubuğu
+		const oneKmPx = (1000 / 111320) * (iH / (maxLat - minLat));
+		const sX = padding + iW - oneKmPx - 20;
+		const sY = padding + iH - 20;
+		ctx.globalAlpha = 1.0;
+		ctx.lineWidth = 2;
+		ctx.strokeStyle = theme.text;
+		ctx.fillStyle = theme.text;
+		ctx.font = "10px monospace";
+		ctx.beginPath();
+		ctx.moveTo(sX, sY); ctx.lineTo(sX + oneKmPx, sY);
+		ctx.moveTo(sX, sY-3); ctx.lineTo(sX, sY+3);
+		ctx.moveTo(sX + oneKmPx, sY-3); ctx.lineTo(sX + oneKmPx, sY+3);
+		ctx.stroke();
+		ctx.textAlign = "center";
+		ctx.fillText("1 KM", sX + (oneKmPx/2), sY - 8);
+		
+		ctx.globalAlpha = 1.0; // Reset
+	}
+
+    // YENİ: html2canvas ile tüm posteri indir
+    function downloadFullPoster() {
+		const posterArea = document.getElementById('canvasContainer');
+		const cityName = document.getElementById('cityNameDisplay').innerText;
+		
+		// scale: 4 değeri 300 DPI baskı kalitesine yakındır
+		html2canvas(posterArea, {
+			scale: 4, 
+			useCORS: true,
+			logging: false,
+			backgroundColor: null
+		}).then(canvasImage => {
+			const link = document.createElement('a');
+			link.download = `CITY_POSTER_HD_${cityName}.png`;
+			link.href = canvasImage.toDataURL("image/png", 1.0); // 1.0 ile en yüksek kalite
+			link.click();
+		});
+	}
+    document.getElementById('themeSelect').addEventListener('change', generateMap);
+    document.getElementById('fontSelect').addEventListener('change', generateMap);
+    document.getElementById('radiusInput').addEventListener('change', () => { lastMapData = null; generateMap(); });
+</script>
+</body>
+</html>
